@@ -1,6 +1,7 @@
 # Project dependencies
 crewai
-crewai.tools
+crewai.tools>=0.1.0
 python-dotenv
 pydantic
-
+langchain-google-genai
+litellm
