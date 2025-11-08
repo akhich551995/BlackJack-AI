@@ -1,0 +1,6 @@
+# Project dependencies
+crewai
+crewai.tools
+python-dotenv
+pydantic
+
