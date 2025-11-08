@@ -1,0 +1,20 @@
+[project]
+name = "blackjack-crew"
+version = "0.1.0"
+description = "A console Blackjack game with optional CrewAI integration"
+authors = [ { name = "ak", email = "" } ]
+readme = "README.md"
+requires-python = ">=3.10"
+
+[project.dependencies]
+python-dotenv = "*"
+pydantic = "*"
+# Leave crewai optional; users can add extras as needed
+crewai = { version = "*", optional = true }
+
+[project.optional-dependencies]
+google-genai = ["crewai[google-genai]"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
