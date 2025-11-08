@@ -6,14 +6,16 @@ authors = [ { name = "ak", email = "" } ]
 readme = "README.md"
 requires-python = ">=3.10"
 
-[project.dependencies]
-python-dotenv = "*"
-pydantic = "*"
-# Leave crewai optional; users can add extras as needed
-crewai = { version = "*", optional = true }
+# Core runtime dependencies (PEP 621 requires a sequence here)
+dependencies = [
+	"python-dotenv",
+	"pydantic",
+]
 
 [project.optional-dependencies]
+# Extras that can be installed on demand
 google-genai = ["crewai[google-genai]"]
+crewai = ["crewai"]
 
 [build-system]
 requires = ["hatchling"]
