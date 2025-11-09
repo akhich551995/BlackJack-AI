@@ -52,32 +52,15 @@ def create_player_turn_tasks(player_name: str, agent: Agent, game: BlackjackGame
 
 def get_all_tasks(agents: Dict[str, Agent], game: BlackjackGame) -> List[Task]:
     """Assembles all tasks in sequential order for the game flow."""
-    
     # 1. Player Turns (Run each AI player's task sequentially)
-    # Human is handled synchronously in main.py via a blocking CLI loop.
-    PLAYER_NAMES = ['AI_Strategist', 'AI_Cautious']
+    # The agents dict contains only AI players; humans are handled in main.py.
     player_tasks = [
         create_player_turn_tasks(name, agents[name], game)
-        for name in PLAYER_NAMES
+        for name in agents.keys()
     ]
 
     # 2. Dealer Turn
-    dealer_turn_task = Task(
-        description=(
-            "All players have finished their turns. Execute the Dealer's turn by calling the Game Action Tool with action='Hit' repeatedly until the score is 17 or more, or bust.\n"
-            "Start by checking the dealer's score. If it's 17 or more, call action='Stand'.\n"
-            f"Dealer's current state:\n---\n{game.get_player_state('Dealer')}\n---"
-        ),
-        agent=agents['Dealer'],
-        expected_output="A full log of all cards drawn by the Dealer and the final score, ending with STAND or BUST.",
-    )
-
-    # 3. Result Task (Reporting)
-    result_task = Task(
-        description="The entire round is over. Call the game.determine_winner() method to generate a final scorecard showing each player's score and the outcome (Win, Loss, or Push).",
-        agent=agents['Dealer'],
-        expected_output="A final scorecard showing the results for all players against the dealer.",
-    )
-
-    # Combine all tasks in sequence
-    return player_tasks + [dealer_turn_task, result_task]
+    # NOTE: Dealer and final result are handled procedurally in main.py for
+    # deterministic behavior, so the Crew-managed tasks list contains only
+    # AI player tasks. The main flow will run dealer_play() and determine_winner().
+    return player_tasks

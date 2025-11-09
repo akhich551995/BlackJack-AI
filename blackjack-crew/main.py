@@ -5,8 +5,7 @@ from dotenv import load_dotenv
 # Import components from the new structure
 from game_core.game import BlackjackGame
 
-# Define the player list globally for setup
-PLAYER_NAMES = ['Human', 'AI_Strategist', 'AI_Cautious']
+# Note: player lists are now created interactively at runtime
 
 def run_blackjack_crew():
     """Initializes environment, game, crew, and runs the simulation."""
@@ -43,9 +42,30 @@ def run_blackjack_crew():
     # Import crewi runtime objects here (we will construct the Crew later).
     from crewai import Crew, Process
 
-    # --- 2. Initialize Game State and Tool ---
-    game = BlackjackGame(player_names=PLAYER_NAMES)
-    game.deal_initial_cards() # Deal the first cards before starting the crew
+    # --- 2. Ask user for table configuration ---
+    # Prompt for total players and how many humans (interactive)
+    def _ask_int(prompt: str, min_v: int, max_v: int) -> int:
+        while True:
+            try:
+                v = int(input(f"{prompt} ({min_v}-{max_v}): ").strip())
+                if min_v <= v <= max_v:
+                    return v
+            except Exception:
+                pass
+            print(f"Please enter an integer between {min_v} and {max_v}.")
+
+    total_players = _ask_int("How many total players at the table", 1, 6)
+    human_players = _ask_int("How many human players", 0, total_players)
+
+    # Build player name lists: humans first, then AIs
+    human_names = [f"Human{i+1}" for i in range(human_players)]
+    ai_count = total_players - human_players
+    ai_names = [f"AI_{i+1}" for i in range(ai_count)]
+    player_names = human_names + ai_names
+
+    # Initialize game with the chosen players and deal initial cards
+    game = BlackjackGame(player_names=player_names)
+    game.deal_initial_cards()
 
     # The tool must be initialized with the active game instance
     # Wrap the real GameActionTool with a lightweight watchdog to prevent
@@ -97,10 +117,9 @@ def run_blackjack_crew():
     game_tool = SafeGameActionTool(game=game, max_actions_per_player=max_actions)
 
     # --- Human turn: blocking CLI loop (synchronous) ---
-    def run_human_turn(game: BlackjackGame, tool: GameActionTool):
-        player = 'Human'
+    def run_human_turn(game: BlackjackGame, tool: GameActionTool, player: str):
         # Show initial state
-        print("\n--- HUMAN TURN ---")
+        print(f"\n--- {player} TURN ---")
         print(game.get_player_state(player))
 
         # Loop until player stands or busts
@@ -130,8 +149,10 @@ def run_blackjack_crew():
                 print("Human turn complete.\n")
                 break
 
-    # Enforce human input (must be present); block until human finishes turn
-    run_human_turn(game, game_tool)
+    # Enforce human input (must be present); block until each human finishes their turn
+    for human in human_names:
+        if human in game.active_players:
+            run_human_turn(game, game_tool, human)
 
     # --- 3. Initialize Agents and Tasks ---
     # Now import agents and tasks and build the Crew-managed tasks for AI players.
@@ -154,7 +175,8 @@ def run_blackjack_crew():
         print("LangChain ChatOpenAI not available; falling back to CREW-managed model string.")
 
     # Let get_agents either receive an explicit llm_instance or a model string
-    agents = get_agents(game_tool=game_tool, llm_instance=llm_instance)
+    # Pass the dynamic list of AI names we created above
+    agents = get_agents(game_tool, ai_names, llm_instance)
     game_tasks = get_all_tasks(agents=agents, game=game)
 
     print("--- Initial Deal Complete ---")
