@@ -18,14 +18,39 @@ class GameActionTool(BaseTool):
     game: BlackjackGame = Field(default=None) # Holds the game instance
 
     def _run(self, player_name: str, action: str) -> str:
-        """Executes the chosen action in the game."""
-        action = action.strip().lower()
+        """Executes the chosen action in the game.
 
-        if action == 'hit':
-            # We call the game's deterministic logic
-            return self.game.hit(player_name)
-        elif action == 'stand':
-            # We call the game's deterministic logic
-            return self.game.stand(player_name)
-        
+        The method accepts either a plain action string ('hit'/'stand') or a
+        JSON string like '{"action": "Hit"}'. It is robust to whitespace
+        and capitalization.
+        """
+        if isinstance(action, str):
+            text = action.strip()
+            # Allow agents to return a JSON object as text: {"action": "Hit"}
+            if text.startswith('{') and text.endswith('}'):
+                try:
+                    import json
+                    payload = json.loads(text)
+                    action_val = payload.get('action')
+                    if isinstance(action_val, str):
+                        text = action_val.strip()
+                except Exception:
+                    # fall through to plain parsing
+                    pass
+
+            action_norm = text.lower()
+            if action_norm == 'hit' or action_norm == 'hit()':
+                return self.game.hit(player_name)
+            if action_norm == 'stand' or action_norm == 'stand()':
+                return self.game.stand(player_name)
+
         return "Invalid action. You must choose 'Hit' or 'Stand'."
+
+    def execute_from_agent_output(self, player_name: str, output_text: str) -> str:
+        """Helper to parse free-form agent output and execute the corresponding action.
+
+        This attempts JSON parsing first, then falls back to scanning for the keywords
+        'hit' or 'stand' in the output. Returns the tool result string.
+        """
+        # Try to reuse _run's parsing logic
+        return self._run(player_name, output_text)

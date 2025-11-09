@@ -1,35 +1,61 @@
 from crewai import Task, Agent
 from game_core.game import BlackjackGame
 from typing import Dict, List
+import os
 
 def create_player_turn_tasks(player_name: str, agent: Agent, game: BlackjackGame) -> Task:
     """Creates a task for a single player's turn."""
     
-    prompt = (
-        f"It is {player_name}'s turn. Your goal is to decide whether to 'Hit' or 'Stand'.\n"
-        f"1. Check the current state using game.get_player_state('{player_name}').\n"
-        f"2. Based on your role and the state, decide 'Hit' or 'Stand'.\n"
-        f"3. Call the Game Action Tool: GameActionTool.execute(player_name='{player_name}', action='[Your Choice]')\n"
-        f"4. Review the tool's output. If the output contains 'TASK COMPLETE' (meaning BUST or STAND), then you are done.\n"
-        f"5. If you chose 'Hit' and the output does NOT contain 'TASK COMPLETE', you MUST repeat steps 2 and 3 for the new state until your turn is over.\n"
-        f"Initial State: {game.get_player_state(player_name)}\n"
-    )
+    # Initialize human_input flag (default is False)
+    human_in = False
 
-    # Human input is injected here to allow the user to interrupt and decide
-    human_in = (player_name == 'Human')
+    # If AUTO_ACCEPT_HUMAN is set to 'true' in the environment, skip human prompts
+    auto_accept = os.getenv('AUTO_ACCEPT_HUMAN', 'false').lower() in ('1', 'true', 'yes')
+
+    if player_name == 'Human':
+        # Custom prompt for the human player to guide user input
+        prompt = (
+            f"It is the **HUMAN PLAYER's** turn. Please follow these steps:\n"
+            f"1. Review the current game state provided below.\n"
+            f"2. Decide whether to **'Hit'** or **'Stand'**.\n"
+            f"3. Your required output format is a single call to the Game Action Tool, e.g.: `GameActionTool.execute(player_name='Human', action='Hit')`.\n"
+            f"4. If you choose 'Hit', the tool will return a new state. You MUST repeat this process for the new state until you 'Stand' or 'Bust'.\n"
+            f"Initial State:\n{game.get_player_state(player_name)}\n"
+            f"--------------------------------------------------\n"
+            f"**HUMAN INPUT REQUIRED**: Provide the full tool execution call (e.g., GameActionTool.execute(...))."
+        )
+        # Explicitly set the flag to True for the Human player task unless
+        # auto-accept is enabled, in which case the task will not require
+        # interactive human input and the Crew flow completes non-interactively.
+        human_in = not auto_accept
+    else:
+        # Standard prompt for AI agents
+        # Enforce a structured JSON response to make parsing deterministic. ONLY
+        # output a single JSON object with an 'action' field whose value is
+        # either "Hit" or "Stand". Example: {"action": "Hit"}
+        prompt = (
+            f"It is {player_name}'s turn. Your goal is to decide whether to 'Hit' or 'Stand'.\n"
+            f"1. Check the current state using game.get_player_state('{player_name}').\n"
+            f"2. Decide the single action to take next.\n"
+            f"3. IMPORTANT: Output ONLY a single JSON object exactly like: {{\"action\": \"Hit\"}} or {{\"action\": \"Stand\"}} and nothing else.\n"
+            f"4. After the tool executes, inspect the result. If it contains 'TASK COMPLETE', your turn is over. If not, repeat this process for the new state.\n"
+            f"Initial State: {game.get_player_state(player_name)}\n"
+        )
 
     return Task(
         description=prompt,
         agent=agent,
         expected_output=f"A final summary of {player_name}'s turn, confirming their final hand and status (STAND or BUST).",
-        human_input=human_in
+        # The Task uses the conditional human_in flag here
+        human_input=human_in 
     )
 
 def get_all_tasks(agents: Dict[str, Agent], game: BlackjackGame) -> List[Task]:
     """Assembles all tasks in sequential order for the game flow."""
     
-    # 1. Player Turns (Run each player's task sequentially)
-    PLAYER_NAMES = ['Human', 'AI_Strategist', 'AI_Cautious']
+    # 1. Player Turns (Run each AI player's task sequentially)
+    # Human is handled synchronously in main.py via a blocking CLI loop.
+    PLAYER_NAMES = ['AI_Strategist', 'AI_Cautious']
     player_tasks = [
         create_player_turn_tasks(name, agents[name], game)
         for name in PLAYER_NAMES
