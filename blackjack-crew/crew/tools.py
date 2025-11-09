@@ -54,3 +54,24 @@ class GameActionTool(BaseTool):
         """
         # Try to reuse _run's parsing logic
         return self._run(player_name, output_text)
+
+
+class ResultTool(BaseTool):
+    """Tool to expose the game's final scorecard deterministically.
+
+    Returns a JSON string containing the final results produced by
+    BlackjackGame.determine_winner(). Agents can call this tool to get a
+    machine-readable scoreboard instead of computing it themselves.
+    """
+    name: str = "Blackjack Result Tool"
+    description: str = "Returns the final scorecard as JSON by calling game.determine_winner()."
+    game: BlackjackGame = Field(default=None)
+
+    def _run(self) -> str:
+        try:
+            import json
+            result_text = self.game.determine_winner()
+            # Return structured JSON with the raw text included for presentation
+            return json.dumps({"scorecard": result_text})
+        except Exception as e:
+            return f"ERROR generating scorecard: {e}"

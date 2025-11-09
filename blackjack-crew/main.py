@@ -60,22 +60,36 @@ def run_blackjack_crew():
             try:
                 super().__init__(game=game)
             except Exception:
-                # Fallback: set attribute directly
-                self.game = game
-            self._counts = defaultdict(int)
-            self.max_actions = int(max_actions_per_player)
+                # Fallback: set attribute directly (use object.__setattr__ to
+                # avoid pydantic/BaseModel attribute validation)
+                object.__setattr__(self, 'game', game)
+
+            # Use object.__setattr__ to set attributes that may not be declared
+            # as pydantic model fields on the BaseTool-derived class.
+            object.__setattr__(self, '_counts', defaultdict(int))
+            object.__setattr__(self, 'max_actions', int(max_actions_per_player))
 
         def _run(self, player_name: str, action: str) -> str:
             # Increment and check watchdog count before delegating
-            self._counts[player_name] += 1
-            if self._counts[player_name] > self.max_actions:
+            # mutate the private counter via object attribute to avoid pydantic
+            counts = object.__getattribute__(self, '_counts')
+            counts[player_name] += 1
+            if counts[player_name] > object.__getattribute__(self, 'max_actions'):
                 # Force the player's turn to end to avoid infinite loops
-                # Ensure the player is removed from active_players
                 try:
-                    self.game.active_players.discard(player_name)
+                    # Try to set the player as stood to keep game state consistent
+                    if hasattr(self, 'game') and getattr(self, 'game') is not None:
+                        try:
+                            self.game.stand(player_name)
+                        except Exception:
+                            # If stand fails, at least remove from active_players
+                            try:
+                                self.game.active_players.discard(player_name)
+                            except Exception:
+                                pass
                 except Exception:
                     pass
-                return f"FORCE: max actions exceeded ({self.max_actions}). Forcing STAND. **TASK COMPLETE.**"
+                return f"FORCE: max actions exceeded ({object.__getattribute__(self, 'max_actions')}). Forcing STAND. **TASK COMPLETE.**"
 
             return super()._run(player_name, action)
 
@@ -160,12 +174,71 @@ def run_blackjack_crew():
     )
     
     final_result = blackjack_crew.kickoff()
+    # After Crew completes AI player tasks, compute the deterministic
+    # dealer play and final scoreboard in-process to ensure correctness.
+    print("=========================================")
+    print("========== BLACKJACK ROUND COMPLETE ==========")
+    print("=========================================")
 
-    print("=========================================")
-    print("========== BLACKJACK GAME OVER ==========")
-    print("=========================================")
-    print("\nFINAL CREW OUTPUT (The result task):\n")
-    print(final_result)
+    # Ensure dealer plays out its hand according to rules (if not already)
+    try:
+        dealer_log = game.dealer_play()
+        print("\n--- Dealer Play Log ---\n")
+        print(dealer_log)
+    except Exception as e:
+        print("Dealer play failed:", e)
+
+    # Compute deterministic final scoreboard using the game logic
+    try:
+        scorecard_text = game.determine_winner()
+        print("\nFINAL SCORECARD (deterministic):\n")
+        print(scorecard_text)
+    except Exception as e:
+        print("Could not determine winner programmatically:", e)
+        scorecard_text = None
+
+    # Optionally summarize the deterministic scorecard using the LLM as a
+    # presentation layer (read-only). Use the explicit llm_instance if
+    # available, otherwise attempt to call the OpenAI SDK if installed.
+    summary = None
+    if scorecard_text:
+        summary_prompt = (
+            "You are an announcer. Summarize the following Blackjack scorecard in one concise paragraph:\n\n"
+            + scorecard_text
+        )
+
+        # Try langchain ChatOpenAI first if we created llm_instance earlier
+        try:
+            if llm_instance is not None:
+                # Try common LangChain interfaces
+                try:
+                    summary = llm_instance.predict(summary_prompt)
+                except Exception:
+                    try:
+                        summary = llm_instance(summary_prompt)
+                    except Exception:
+                        # Give up on langchain-style llm_instance
+                        summary = None
+
+            # Fallback to openai SDK if available and llm_instance was not used
+            if summary is None:
+                try:
+                    import openai
+                    openai.api_key = os.getenv('OPENAI_API_KEY')
+                    resp = openai.ChatCompletion.create(
+                        model=LLM_MODEL,
+                        messages=[{"role": "user", "content": summary_prompt}],
+                        temperature=float(os.environ.get('CREWAI_TEMPERATURE', '0')),
+                    )
+                    summary = resp['choices'][0]['message']['content']
+                except Exception:
+                    summary = None
+        except Exception:
+            summary = None
+
+    if summary:
+        print("\n--- ANNOUNCEMENT (LLM) ---\n")
+        print(summary)
     print("=========================================")
 
 
