@@ -2,22 +2,13 @@ import os
 from crewai import Agent
 from crew.tools import GameActionTool
 from typing import Any, Optional, List
-from pydantic import BaseModel # Added this to ensure type resolution is clean
-import os
 
 
 def get_agents(game_tool: GameActionTool, ai_names: List[str], llm_instance: Optional[Any] = None) -> dict:
-    """Create Agent instances for the provided AI player names.
+    """Create AI Agent objects for the given names.
 
-    - `ai_names` is a list of strings like ['AI_1', 'AI_2'].
-    - The first AI in the list is assigned the 'Strategist' role; remaining
-      AIs are assigned the 'Cautious' role by default.
-    - Human players are intentionally omitted from this agents dict and are
-      handled synchronously by `main.py`.
-
-    If `llm_instance` is provided it will be passed to each Agent as `llm`.
-    Otherwise, Agents will be created using the model string from the
-    CREWAI_MODEL environment variable.
+    First AI gets a 'Strategist' role; remaining AIs are 'Cautious'.
+    Passes either an llm instance or a model string to Agent.
     """
 
     model_string = None
@@ -27,23 +18,20 @@ def get_agents(game_tool: GameActionTool, ai_names: List[str], llm_instance: Opt
     def _agent_llm_kwargs():
         if llm_instance is not None:
             return {'llm': llm_instance}
-        elif model_string:
+        if model_string:
             return {'model': model_string}
-        else:
-            return {}
+        return {}
 
     agents = {}
-
-    # Create AI agents according to the provided names and assign roles
     for idx, name in enumerate(ai_names):
         if idx == 0:
             role = 'AI Blackjack Strategist'
-            goal = 'Determine the mathematically optimal move (Hit or Stand) based on the Basic Strategy chart for Blackjack.'
-            backstory = "You are a genius AI player who always chooses the mathematically optimal action to minimize the house edge."
+            goal = 'Select the optimal Hit/Stand based on basic strategy.'
+            backstory = 'Plays to minimize house edge.'
         else:
             role = 'AI Cautious Player'
-            goal = 'Play cautiously: Stand on any score of 15 or higher. Hit only if your score is 14 or lower.'
-            backstory = "You are an AI who prioritizes safety over aggression, always trying to avoid a bust."
+            goal = 'Stand on 15+; hit on 14 or less.'
+            backstory = 'Prioritizes avoiding busts.'
 
         agents[name] = Agent(
             role=role,

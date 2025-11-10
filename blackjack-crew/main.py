@@ -5,41 +5,32 @@ from dotenv import load_dotenv
 # Import components from the new structure
 from game_core.game import BlackjackGame
 
-# Note: player lists are now created interactively at runtime
+# Player lists are created interactively at runtime
 
 def run_blackjack_crew():
-    """Initializes environment, game, crew, and runs the simulation."""
-    
-    # --- 1. Load Environment Variables ---
-    # Load .env located next to this script (robust when working dir differs)
+    """Start a console Blackjack round with Crew-managed AI players.
+
+    Loads .env, configures model env vars, prompts for players, runs human
+    turns synchronously, runs AI turns via Crew, executes dealer logic, and
+    prints a deterministic final scorecard.
+    """
+
     env_path = Path(__file__).resolve().parent / '.env'
     load_dotenv(dotenv_path=env_path)
-    # Get desired provider/model from env. Default to OpenAI provider.
     os.environ["CREWAI_LLM_PROVIDER"] = os.environ.get("CREWAI_LLM_PROVIDER", "openai")
-    # CREWAI_MODEL is the model name CrewAI Agents will use when created from a string
     LLM_MODEL = os.environ.get("CREWAI_MODEL") or os.environ.get("LLM_MODEL") or "gpt-4o-mini"
-    # Explicitly set CREWAI_MODEL and generic MODEL envs (direct assignment)
     os.environ["CREWAI_MODEL"] = LLM_MODEL
     os.environ["MODEL"] = f"openai/{LLM_MODEL}"
     os.environ["MODEL_NAME"] = f"openai/{LLM_MODEL}"
 
-    # Do not require Google/Gemini keys anymore; expect OPENAI_API_KEY in .env
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
     if OPENAI_API_KEY:
         print("OPENAI_API_KEY found in environment.")
     else:
         print(f"WARNING: OPENAI_API_KEY not set. Checked {env_path}")
 
-    print("=========================================")
-    print(f"======== STARTING BLACKJACK CREW (Model: {LLM_MODEL}) ========")
-    print("=========================================")
-    # Import crew modules after environment is configured to avoid crewi
-    # creating a fallback LLM from the environment during module import.
-    # We only import the GameActionTool now because the Human turn is handled
-    # synchronously below; agents/tasks are imported after the human turn so
-    # the Human is not represented as a Crew-managed task.
+    # Import tools and Crew runtime (agents/tasks imported later)
     from crew.tools import GameActionTool
-    # Import crewi runtime objects here (we will construct the Crew later).
     from crewai import Crew, Process
 
     # --- 2. Ask user for table configuration ---
@@ -67,42 +58,34 @@ def run_blackjack_crew():
     game = BlackjackGame(player_names=player_names)
     game.deal_initial_cards()
 
-    # The tool must be initialized with the active game instance
-    # Wrap the real GameActionTool with a lightweight watchdog to prevent
-    # infinite loops: limit the number of actions a single player can take
-    # during their turn. The limit can be overridden with CREWAI_MAX_ACTIONS.
+    # Initialize GameActionTool and a lightweight watchdog to limit repeated actions
     from collections import defaultdict
 
     class SafeGameActionTool(GameActionTool):
+        """Tool wrapper that enforces a per-player action limit.
+
+        Uses object.__setattr__/__getattribute__ to avoid pydantic/BaseModel
+        attribute errors when adding runtime-only fields.
+        """
+
         def __init__(self, game, max_actions_per_player: int = 10):
-            # Some BaseTool implementations don't expect __init__, so we
-            # set the game attribute directly and keep subclass behavior.
             try:
                 super().__init__(game=game)
             except Exception:
-                # Fallback: set attribute directly (use object.__setattr__ to
-                # avoid pydantic/BaseModel attribute validation)
                 object.__setattr__(self, 'game', game)
 
-            # Use object.__setattr__ to set attributes that may not be declared
-            # as pydantic model fields on the BaseTool-derived class.
             object.__setattr__(self, '_counts', defaultdict(int))
             object.__setattr__(self, 'max_actions', int(max_actions_per_player))
 
         def _run(self, player_name: str, action: str) -> str:
-            # Increment and check watchdog count before delegating
-            # mutate the private counter via object attribute to avoid pydantic
             counts = object.__getattribute__(self, '_counts')
             counts[player_name] += 1
             if counts[player_name] > object.__getattribute__(self, 'max_actions'):
-                # Force the player's turn to end to avoid infinite loops
                 try:
-                    # Try to set the player as stood to keep game state consistent
                     if hasattr(self, 'game') and getattr(self, 'game') is not None:
                         try:
                             self.game.stand(player_name)
                         except Exception:
-                            # If stand fails, at least remove from active_players
                             try:
                                 self.game.active_players.discard(player_name)
                             except Exception:
@@ -116,15 +99,16 @@ def run_blackjack_crew():
     max_actions = int(os.environ.get('CREWAI_MAX_ACTIONS', '10'))
     game_tool = SafeGameActionTool(game=game, max_actions_per_player=max_actions)
 
-    # --- Human turn: blocking CLI loop (synchronous) ---
     def run_human_turn(game: BlackjackGame, tool: GameActionTool, player: str):
-        # Show initial state
+        """Blocking loop for a single human player's turn.
+
+        Prompts for 'hit' or 'stand', updates the game via the tool, and
+        prints the updated hand after each action.
+        """
         print(f"\n--- {player} TURN ---")
         print(game.get_player_state(player))
 
-        # Loop until player stands or busts
         while player in game.active_players:
-            # Display concise info
             hand = [str(c) for c in game.hands[player]]
             score = game.score_hand(game.hands[player])
             print(f"Your Hand: {hand} | Score: {score}")
@@ -135,16 +119,13 @@ def run_blackjack_crew():
                 print("Invalid input. Please type 'hit' or 'stand' (without quotes).")
                 continue
 
-            # Call the GameActionTool directly using the underlying _run method
             result = tool._run(player, choice)
             print(result)
 
-            # Show updated hand after action
             hand = [str(c) for c in game.hands[player]]
             score = game.score_hand(game.hands[player])
             print(f"Updated Hand: {hand} | Score: {score}")
 
-            # If TASK COMPLETE is returned or player no longer active, break
             if "TASK COMPLETE" in str(result) or player not in game.active_players:
                 print("Human turn complete.\n")
                 break
@@ -154,15 +135,9 @@ def run_blackjack_crew():
         if human in game.active_players:
             run_human_turn(game, game_tool, human)
 
-    # --- 3. Initialize Agents and Tasks ---
-    # Now import agents and tasks and build the Crew-managed tasks for AI players.
+    # Create AI agents and tasks
     from crew.agents import get_agents
     from crew.tasks import get_all_tasks
-
-    # Option A: explicitly construct an LLM instance (preferred) so we can
-    # control temperature and other params. We try to create a LangChain
-    # ChatOpenAI instance if the package is available. If not, we fall back
-    # to letting Crew construct the LLM from the CREWAI_MODEL env string.
     llm_instance = None
     desired_temp = float(os.environ.get('CREWAI_TEMPERATURE', '0'))
     try:
@@ -174,8 +149,7 @@ def run_blackjack_crew():
         # LangChain ChatOpenAI not available; fall back to env-driven model creation
         print("LangChain ChatOpenAI not available; falling back to CREW-managed model string.")
 
-    # Let get_agents either receive an explicit llm_instance or a model string
-    # Pass the dynamic list of AI names we created above
+    # Create agents for AI players (llm_instance may be None)
     agents = get_agents(game_tool, ai_names, llm_instance)
     game_tasks = get_all_tasks(agents=agents, game=game)
 
@@ -183,21 +157,20 @@ def run_blackjack_crew():
     print(f"Dealer's Up Card: {str(game.hands['Dealer'][0])}")
     print("\nStarting Player Turns...")
 
-    # --- 4. Create and Run Crew ---
-    
-    # Pass all agent instances (Dealer + Players) to the Crew
+    # Run AI agents with Crew sequentially
     all_agents = list(agents.values()) 
 
+    # Instantiate Crew without internal verbose printing so our own
+    # final scoreboard appears last in the CLI output.
     blackjack_crew = Crew(
         agents=all_agents,
         tasks=game_tasks,
-        process=Process.sequential, 
-        verbose=True,
+        process=Process.sequential,
+        verbose=False,
     )
     
     final_result = blackjack_crew.kickoff()
-    # After Crew completes AI player tasks, compute the deterministic
-    # dealer play and final scoreboard in-process to ensure correctness.
+    # After AI turns complete, run deterministic dealer logic and compute results
     print("=========================================")
     print("========== BLACKJACK ROUND COMPLETE ==========")
     print("=========================================")
@@ -219,9 +192,7 @@ def run_blackjack_crew():
         print("Could not determine winner programmatically:", e)
         scorecard_text = None
 
-    # Optionally summarize the deterministic scorecard using the LLM as a
-    # presentation layer (read-only). Use the explicit llm_instance if
-    # available, otherwise attempt to call the OpenAI SDK if installed.
+    # Optionally summarize the deterministic scorecard using an LLM (presentation only)
     summary = None
     if scorecard_text:
         summary_prompt = (
