@@ -1,0 +1,7 @@
+# Example environment variables for blackjack-crew
+.env
+__pycache__
+call_debug.log
+test_llm.py
+test_llm.log
+test_llm_probe.log
