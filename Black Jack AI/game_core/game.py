@@ -176,4 +176,3 @@ class BlackjackGame:
         
         return "\n".join(results)
 
-# Ensure game_core is treated as a package
